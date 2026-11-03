@@ -14,3 +14,21 @@ curl.exe -s -D - -o NUL http://127.0.0.1:3000/418
 
 # GET: код, якого немає на http.cat, відповідь 404, у кеш нічого не потрапляє
 curl.exe -i http://127.0.0.1:3000/999
+
+# PUT: записує власну картинку в кеш (повертає 201)
+curl.exe -i -X PUT --data-binary "@test-images/my.jpg" http://127.0.0.1:3000/418
+
+# GET після PUT: повертається власна картинка (HIT), розмір збігається з my.jpg
+curl.exe -s -D - -o NUL http://127.0.0.1:3000/418
+
+# PUT без тіла: 400
+curl.exe -i -X PUT http://127.0.0.1:3000/418
+
+# DELETE: видаляє картинку з кешу (200)
+curl.exe -i -X DELETE http://127.0.0.1:3000/418
+
+# GET після DELETE: картинка знову з http.cat (MISS)
+curl.exe -s -D - -o NUL http://127.0.0.1:3000/418
+
+# DELETE картинки, якої немає в кеші: 404
+curl.exe -i -X DELETE http://127.0.0.1:3000/299

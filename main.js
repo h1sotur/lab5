@@ -2,7 +2,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm, unlink } from 'node:fs/promises';
 import superagent from 'superagent';
 import { Command } from 'commander';
 
@@ -114,6 +114,19 @@ async function handlePut(req, res, filePath) {
   send(res, 201, 'Картинку збережено');
 }
 
+async function handleDelete(res, filePath) {
+  try {
+    await unlink(filePath);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      send(res, 404, 'Картинки немає в кеші');
+      return;
+    }
+    throw err;
+  }
+  send(res, 200, 'Картинку видалено');
+}
+
 // єдиний дозволений колбек: обробник запиту
 const server = http.createServer(async (req, res) => {
   try {
@@ -133,7 +146,7 @@ const server = http.createServer(async (req, res) => {
     const code = match[1];
     const filePath = path.join(options.cache, `${code}.jpg`);
 
-      if (req.method === 'GET') {
+         if (req.method === 'GET') {
       await handleGet(res, code, filePath);
       return;
     }
@@ -143,13 +156,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // заглушка, далі тут з'явиться DELETE
-    send(res, 200, `Заглушка: ${req.method} ${code}`);
-
-    // заглушка, далі тут з'являться PUT і DELETE
-    send(res, 200, `Заглушка: ${req.method} ${code}`);
+    // сюди доходить лише DELETE: інші методи відсіяні вище
+    await handleDelete(res, filePath);
   } catch (err) {
     console.error(err);
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
     send(res, 500, 'Внутрішня помилка сервера');
   }
 });
