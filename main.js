@@ -95,6 +95,25 @@ async function handleGet(res, code, filePath) {
   sendImage(res, image, source);
 }
 
+// збирання тіла запиту: for await читає потік частинами без колбеків
+async function readBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function handlePut(req, res, filePath) {
+  const body = await readBody(req);
+  if (body.length === 0) {
+    send(res, 400, 'Тіло запиту порожнє: потрібна картинка');
+    return;
+  }
+  await saveToCache(filePath, body);
+  send(res, 201, 'Картинку збережено');
+}
+
 // єдиний дозволений колбек: обробник запиту
 const server = http.createServer(async (req, res) => {
   try {
@@ -114,10 +133,18 @@ const server = http.createServer(async (req, res) => {
     const code = match[1];
     const filePath = path.join(options.cache, `${code}.jpg`);
 
-    if (req.method === 'GET') {
+      if (req.method === 'GET') {
       await handleGet(res, code, filePath);
       return;
     }
+
+    if (req.method === 'PUT') {
+      await handlePut(req, res, filePath);
+      return;
+    }
+
+    // заглушка, далі тут з'явиться DELETE
+    send(res, 200, `Заглушка: ${req.method} ${code}`);
 
     // заглушка, далі тут з'являться PUT і DELETE
     send(res, 200, `Заглушка: ${req.method} ${code}`);
