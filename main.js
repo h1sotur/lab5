@@ -1,7 +1,9 @@
 import http from 'node:http';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import superagent from 'superagent';
 import { Command } from 'commander';
 
 const program = new Command();
@@ -30,6 +32,69 @@ function send(res, status, text, headers = {}) {
   res.end(text);
 }
 
+// відповідь-картинка; source каже, звідки вона взята: HIT (кеш) або MISS (http.cat)
+function sendImage(res, image, source) {
+  res.writeHead(200, {
+    'Content-Type': 'image/jpeg',
+    'Content-Length': image.length,
+    'X-Cache': source,
+  });
+  res.end(image);
+}
+
+// читання з кешу: null означає «у кеші немає», інші помилки йдуть далі
+async function readFromCache(filePath) {
+  try {
+    return await readFile(filePath);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+// запис у кеш через тимчасовий файл і rename, щоб файл ніколи не був записаний наполовину
+async function saveToCache(filePath, data) {
+  const tmpPath = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, data);
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await rm(tmpPath, { force: true });
+    throw err;
+  }
+}
+
+// запит до http.cat: null, якщо картинку отримати не вдалося
+async function fetchFromHttpCat(code) {
+  try {
+    const response = await superagent
+      .get(`https://http.cat/${code}`)
+      .buffer(true)
+      .parse(superagent.parse.image);
+    return Buffer.isBuffer(response.body) && response.body.length > 0 ? response.body : null;
+  } catch (err) {
+    console.error(`http.cat для ${code}: ${err.status ?? err.code ?? err.message}`);
+    return null;
+  }
+}
+
+async function handleGet(res, code, filePath) {
+  let image = await readFromCache(filePath);
+  let source = 'HIT';
+
+  if (!image) {
+    image = await fetchFromHttpCat(code);
+    if (!image) {
+      send(res, 404, 'Картинку не знайдено');
+      return;
+    }
+    await saveToCache(filePath, image);
+    source = 'MISS';
+  }
+
+  sendImage(res, image, source);
+}
+
 // єдиний дозволений колбек: обробник запиту
 const server = http.createServer(async (req, res) => {
   try {
@@ -49,8 +114,13 @@ const server = http.createServer(async (req, res) => {
     const code = match[1];
     const filePath = path.join(options.cache, `${code}.jpg`);
 
-    // заглушка, далі тут з'являться GET, PUT і DELETE
-    send(res, 200, `Заглушка: ${req.method} ${code} -> ${filePath}`);
+    if (req.method === 'GET') {
+      await handleGet(res, code, filePath);
+      return;
+    }
+
+    // заглушка, далі тут з'являться PUT і DELETE
+    send(res, 200, `Заглушка: ${req.method} ${code}`);
   } catch (err) {
     console.error(err);
     send(res, 500, 'Внутрішня помилка сервера');
